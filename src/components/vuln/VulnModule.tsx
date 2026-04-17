@@ -7,8 +7,10 @@ import {
   ChevronDown,
   ChevronRight,
   Play,
+  Eye,
 } from "lucide-react";
 import { useOnyxStore } from "../../store/onyx";
+import { VulnDetailModal } from "../shared/VulnDetailModal";
 import type { Vulnerability } from "../../types";
 import { severityBg, severityColors } from "../../types";
 
@@ -17,8 +19,9 @@ export function VulnModule() {
   const [filter, setFilter] = useState<string>("all");
   const [search, setSearch] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [selectedVuln, setSelectedVuln] = useState<Vulnerability | null>(null);
+  const [selectedTargetHost, setSelectedTargetHost] = useState<string | undefined>();
 
-  // Get vulnerabilities from all targets in the active project
   const vulns = activeProject?.targets.flatMap((t) =>
     t.vulnerabilities.map((v) => ({ ...v, target_host: t.host }))
   ) || [];
@@ -39,9 +42,11 @@ export function VulnModule() {
     Info: vulns.filter((v) => v.severity === "Info").length,
   }), [vulns]);
 
-  // Confirmed/FP toggling is display-only in this version (managed via backend in next iteration)
-  const toggleConfirmed = (_id: string) => { };
-  const markFalsePositive = (_id: string) => { };
+  const refreshProject = async () => {
+    if (activeProject) {
+      await useOnyxStore.getState().loadProject(activeProject.id);
+    }
+  };
 
   return (
     <div className="flex flex-col h-full gap-4">
@@ -114,47 +119,59 @@ export function VulnModule() {
 
         <div className="overflow-y-auto max-h-[350px]">
           {filtered.map((vuln) => (
-            <VulnItem
+            <VulnRow
               key={vuln.id}
               vuln={vuln}
               expanded={expandedId === vuln.id}
               onToggle={() => setExpandedId(expandedId === vuln.id ? null : vuln.id)}
-              onConfirm={() => toggleConfirmed(vuln.id)}
-              onFalsePositive={() => markFalsePositive(vuln.id)}
+              onDetail={() => {
+                setSelectedVuln(vuln);
+                setSelectedTargetHost(vuln.target_host);
+              }}
             />
           ))}
           {filtered.length === 0 && (
             <div className="flex flex-col items-center justify-center py-12 text-text-muted">
               <Shield size={32} className="mb-3 opacity-30" />
               <p className="text-sm">No vulnerabilities found</p>
+              {vulns.length === 0 && (
+                <p className="text-xs mt-1">Run a vulnerability scan from the Recon module first</p>
+              )}
             </div>
           )}
         </div>
       </div>
+
+      {/* Vuln Detail Modal */}
+      {selectedVuln && (
+        <VulnDetailModal
+          vuln={selectedVuln}
+          targetHost={selectedTargetHost}
+          onClose={() => setSelectedVuln(null)}
+          onUpdate={refreshProject}
+        />
+      )}
     </div>
   );
 }
 
-function VulnItem({
+function VulnRow({
   vuln,
   expanded,
   onToggle,
-  onConfirm,
-  onFalsePositive,
+  onDetail,
 }: {
-  vuln: Vulnerability;
+  vuln: Vulnerability & { target_host: string };
   expanded: boolean;
   onToggle: () => void;
-  onConfirm: () => void;
-  onFalsePositive: () => void;
+  onDetail: () => void;
 }) {
   return (
     <div className={`border-b border-border last:border-0 ${vuln.false_positive ? "opacity-50" : ""}`}>
       <div
-        className="flex items-center gap-3 px-4 py-2.5 hover:bg-surface-2/50 transition-colors cursor-pointer"
-        onClick={onToggle}
+        className="flex items-center gap-3 px-4 py-2.5 hover:bg-surface-2/50 transition-colors"
       >
-        <button className="text-text-muted">
+        <button onClick={onToggle} className="text-text-muted">
           {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </button>
 
@@ -162,16 +179,19 @@ function VulnItem({
           {vuln.severity.toUpperCase()}
         </span>
 
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium truncate">{vuln.title}</p>
+        <button className="flex-1 min-w-0 text-left" onClick={onDetail} title="Click for details">
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-medium truncate">{vuln.title}</p>
+            <Eye size={12} className="text-text-muted flex-shrink-0 opacity-0 hover:opacity-100" />
+          </div>
           <div className="flex items-center gap-2 mt-0.5">
             {vuln.cve && <span className="text-[10px] text-accent terminal-text">{vuln.cve}</span>}
             {vuln.cvss_score !== undefined && vuln.cvss_score > 0 && (
               <span className="text-[10px] text-text-muted">CVSS: {vuln.cvss_score.toFixed(1)}</span>
             )}
-            <span className="text-[10px] text-text-muted">[{vuln.module}]</span>
+            <span className="text-[10px] text-text-muted">{vuln.target_host}</span>
           </div>
-        </div>
+        </button>
 
         <div className="flex items-center gap-1 flex-shrink-0">
           {vuln.confirmed && <CheckCircle size={12} className="text-[#27C93F]" />}
@@ -181,41 +201,13 @@ function VulnItem({
 
       {expanded && (
         <div className="px-6 pb-3 bg-surface-2/30 border-t border-border">
-          <p className="text-xs text-text mt-3">{vuln.description}</p>
-
-          {vuln.evidence.length > 0 && (
-            <div className="mt-3">
-              <p className="text-[10px] text-text-muted uppercase tracking-wider mb-1">Evidence</p>
-              {vuln.evidence.map((ev, i) => (
-                <div key={i} className="bg-[#0A0A0E] rounded px-3 py-1.5 mt-1 terminal-text text-[11px] text-[#FFB800]">
-                  {ev}
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div className="flex gap-2 mt-3">
-            <button
-              onClick={(e) => { e.stopPropagation(); onConfirm(); }}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded text-[11px] transition-colors ${
-                vuln.confirmed
-                  ? "bg-[#27C93F]/20 text-[#27C93F]"
-                  : "bg-surface-3 text-text-muted hover:text-text"
-              }`}
-            >
-              <CheckCircle size={11} /> {vuln.confirmed ? "Confirmed" : "Confirm"}
-            </button>
-            <button
-              onClick={(e) => { e.stopPropagation(); onFalsePositive(); }}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded text-[11px] transition-colors ${
-                vuln.false_positive
-                  ? "bg-text-muted/20 text-text-muted"
-                  : "bg-surface-3 text-text-muted hover:text-text"
-              }`}
-            >
-              <XCircle size={11} /> {vuln.false_positive ? "False Positive" : "Mark FP"}
-            </button>
-          </div>
+          <p className="text-xs text-text mt-2">{vuln.description}</p>
+          <button
+            onClick={onDetail}
+            className="mt-2 text-[11px] text-accent hover:text-accent-dim flex items-center gap-1"
+          >
+            View full details <Eye size={10} />
+          </button>
         </div>
       )}
     </div>
