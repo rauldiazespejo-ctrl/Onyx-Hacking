@@ -1,0 +1,28 @@
+# Build output
+dist/
+src-tauri/target/
+
+# Dependencies
+node_modules/
+
+# OS files
+.DS_Store
+*.swp
+*.swo
+*~
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+.env
+
+# Tauri generated (rebuild on each machine)
+src-tauri/gen/
+
+# Database (local data)
+*.db
+*.db-wal
+*.db-shm
