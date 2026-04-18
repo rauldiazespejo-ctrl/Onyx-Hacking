@@ -45,6 +45,8 @@ interface OnyxStore {
   runReconScan: (projectId: string, targetId: string) => Promise<ScanResult>;
   runVulnScan: (projectId: string, targetId: string) => Promise<Vulnerability[]>;
   saveEngagement: (projectId: string, engagement: Engagement) => Promise<void>;
+  deleteScanResult: (projectId: string, scanId: string) => Promise<void>;
+  clearScanHistory: (projectId: string) => Promise<number>;
 }
 
 export const useOnyxStore = create<OnyxStore>((set, get) => ({
@@ -205,6 +207,39 @@ export const useOnyxStore = create<OnyxStore>((set, get) => ({
       });
     } catch (e) {
       toastInvokeError("Could not save engagement", e);
+      throw e;
+    }
+  },
+
+  deleteScanResult: async (projectId: string, scanId: string) => {
+    try {
+      await invoke("delete_scan_result", { projectId, scanId });
+      get().addTerminalLine(`\x1b[33m[-]\x1b[0m Scan removed from history (linked ports cleared)`);
+      await get().loadProject(projectId);
+      useToastStore.getState().addToast({
+        type: "success",
+        title: "Scan deleted",
+        message: "The scan record and its port rows were removed from this project.",
+      });
+    } catch (e) {
+      toastInvokeError("Could not delete scan", e);
+      throw e;
+    }
+  },
+
+  clearScanHistory: async (projectId: string) => {
+    try {
+      const removed = await invoke<number>("clear_scan_history", { projectId });
+      get().addTerminalLine(`\x1b[33m[-]\x1b[0m Cleared ${removed} scan record(s) from history`);
+      await get().loadProject(projectId);
+      useToastStore.getState().addToast({
+        type: "success",
+        title: "Scan history cleared",
+        message: removed > 0 ? `${removed} scan(s) removed. Port data from those scans was deleted.` : "There were no scans to remove.",
+      });
+      return removed;
+    } catch (e) {
+      toastInvokeError("Could not clear scan history", e);
       throw e;
     }
   },

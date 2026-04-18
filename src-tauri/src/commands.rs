@@ -613,6 +613,87 @@ pub fn get_scan_history(db: State<'_, Database>, project_id: String) -> Result<V
     Ok(results)
 }
 
+#[tauri::command]
+pub fn delete_scan_result(
+    db: State<'_, Database>,
+    project_id: String,
+    scan_id: String,
+) -> Result<(), String> {
+    let conn = db.get_conn()?;
+    let exists: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM scan_results WHERE id = ?1 AND project_id = ?2",
+            params![scan_id, project_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if exists == 0 {
+        return Err("That scan was not found in this project.".into());
+    }
+
+    conn.execute("DELETE FROM ports WHERE scan_id = ?1", params![scan_id])
+        .map_err(|e| e.to_string())?;
+    conn.execute(
+        "DELETE FROM scan_results WHERE id = ?1 AND project_id = ?2",
+        params![scan_id, project_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "UPDATE projects SET updated_at = ?1 WHERE id = ?2",
+        params![now_iso(), project_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    try_audit(
+        &conn,
+        Some(&project_id),
+        "scan_deleted",
+        &serde_json::json!({ "scan_id": scan_id }).to_string(),
+    );
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn clear_scan_history(db: State<'_, Database>, project_id: String) -> Result<u32, String> {
+    let conn = db.get_conn()?;
+
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM scan_results WHERE project_id = ?1",
+            params![project_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "DELETE FROM ports WHERE scan_id IN (SELECT id FROM scan_results WHERE project_id = ?1)",
+        params![project_id],
+    )
+    .map_err(|e| e.to_string())?;
+    conn.execute(
+        "DELETE FROM scan_results WHERE project_id = ?1",
+        params![project_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "UPDATE projects SET updated_at = ?1 WHERE id = ?2",
+        params![now_iso(), project_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    try_audit(
+        &conn,
+        Some(&project_id),
+        "scan_history_cleared",
+        &serde_json::json!({ "removed": count }).to_string(),
+    );
+
+    Ok(count as u32)
+}
+
 // === AUDIT & EXPORT ===
 
 #[tauri::command]

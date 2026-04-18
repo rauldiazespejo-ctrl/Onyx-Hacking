@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import {
   Search,
   Plus,
@@ -6,20 +7,32 @@ import {
   Server,
   Wifi,
   Play,
-  
   Shield,
   ChevronDown,
   ChevronRight,
+  Clock,
+  Trash2,
 } from "lucide-react";
 import { useOnyxStore } from "../../store/onyx";
-import type { Target } from "../../types";
+import type { ScanResult, Target } from "../../types";
 import { engagementAllowsScans } from "../../types";
 
 export function ReconModule() {
-  const { activeProject, addTarget, } = useOnyxStore();
+  const { activeProject, addTarget, deleteScanResult, clearScanHistory } = useOnyxStore();
   const [newTarget, setNewTarget] = useState("");
   const [scanningTargetId, setScanningTargetId] = useState<string | null>(null);
   const [expandedTargets, setExpandedTargets] = useState<Set<string>>(new Set());
+  const [scanHistory, setScanHistory] = useState<ScanResult[]>([]);
+
+  useEffect(() => {
+    if (!activeProject?.id) {
+      setScanHistory([]);
+      return;
+    }
+    invoke<ScanResult[]>("get_scan_history", { projectId: activeProject.id })
+      .then((scans) => setScanHistory(scans))
+      .catch(() => setScanHistory([]));
+  }, [activeProject?.id, activeProject?.updated_at]);
 
   const handleAddTarget = async () => {
     if (!newTarget.trim() || !activeProject) return;
@@ -139,6 +152,90 @@ export function ReconModule() {
           )}
         </div>
       </div>
+
+      {/* Scan history — delete test runs from here or Dashboard */}
+      {activeProject && (
+        <div className="bg-surface rounded-lg border border-border overflow-hidden flex flex-col flex-shrink-0">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-border gap-2">
+            <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider flex items-center gap-2">
+              <Clock size={14} />
+              Scan history
+            </h3>
+            {scanHistory.length > 0 && (
+              <button
+                type="button"
+                title="Remove all scan records for this project"
+                onClick={() => {
+                  if (
+                    !window.confirm(
+                      "Delete all scan history? Port rows from those scans will be removed from targets."
+                    )
+                  ) {
+                    return;
+                  }
+                  void clearScanHistory(activeProject.id)
+                    .then(() =>
+                      invoke<ScanResult[]>("get_scan_history", { projectId: activeProject.id }).then(setScanHistory)
+                    )
+                    .catch(() => {});
+                }}
+                className="text-[10px] px-2 py-1 rounded-md text-danger/90 hover:bg-danger/10 border border-danger/20 transition-colors"
+              >
+                Clear all
+              </button>
+            )}
+          </div>
+          <div className="overflow-y-auto max-h-[220px]">
+            {scanHistory.length === 0 ? (
+              <div className="px-4 py-8 text-center text-text-muted text-sm">No scans recorded yet</div>
+            ) : (
+              scanHistory.map((scan) => {
+                const host =
+                  activeProject.targets.find((t) => t.id === scan.target_id)?.host ?? scan.target_id.slice(0, 8);
+                return (
+                  <div
+                    key={scan.id}
+                    className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-border last:border-0 hover:bg-surface-2/40"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium capitalize truncate">
+                        {scan.module} · {host}
+                      </p>
+                      <p className="text-[10px] text-text-muted">{scan.started_at.slice(0, 19).replace("T", " ")}</p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <span className="text-[10px] text-text-muted">{scan.ports_found.length} ports</span>
+                      <button
+                        type="button"
+                        title="Delete this scan"
+                        onClick={() => {
+                          if (
+                            !window.confirm(
+                              "Delete this scan? Ports discovered in that run will be removed from the target."
+                            )
+                          ) {
+                            return;
+                          }
+                          void deleteScanResult(activeProject.id, scan.id)
+                            .then(() =>
+                              invoke<ScanResult[]>("get_scan_history", { projectId: activeProject.id }).then(
+                                setScanHistory
+                              )
+                            )
+                            .catch(() => {});
+                        }}
+                        className="p-1.5 rounded-md text-text-muted hover:text-danger hover:bg-danger/10 transition-colors"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

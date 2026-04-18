@@ -36,6 +36,8 @@ fn main() {
             onyx_lib::commands::toggle_vuln_confirmed,
             onyx_lib::commands::toggle_false_positive,
             onyx_lib::commands::get_scan_history,
+            onyx_lib::commands::delete_scan_result,
+            onyx_lib::commands::clear_scan_history,
             onyx_lib::commands::get_app_info,
             onyx_lib::commands::update_project_engagement,
             onyx_lib::commands::list_audit_events,
