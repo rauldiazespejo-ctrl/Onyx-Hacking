@@ -18,6 +18,22 @@ impl Database {
         let migration_sql = include_str!("../migrations/001_init.sql");
         conn.execute_batch(migration_sql)?;
 
+        let has_engagement: bool = conn
+            .prepare("SELECT 1 FROM pragma_table_info('projects') WHERE name = 'client_name' LIMIT 1")
+            .and_then(|mut s| s.exists([]))
+            .unwrap_or(false);
+        if !has_engagement {
+            conn.execute_batch(include_str!("../migrations/002_project_engagement.sql"))?;
+        }
+
+        let has_audit: bool = conn
+            .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='audit_log' LIMIT 1")
+            .and_then(|mut s| s.exists([]))
+            .unwrap_or(false);
+        if !has_audit {
+            conn.execute_batch(include_str!("../migrations/003_audit_log.sql"))?;
+        }
+
         log::info!("Database initialized at: {:?}", db_path);
 
         Ok(Self {

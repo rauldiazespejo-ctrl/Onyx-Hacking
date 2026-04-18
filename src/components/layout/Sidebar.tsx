@@ -12,6 +12,8 @@ import {
 } from "lucide-react";
 import { useOnyxStore } from "../../store/onyx";
 import type { Module } from "../../types";
+import { OnyxOwlMark } from "../branding/OnyxOwlMark";
+import { PulsoAiBadge } from "../branding/PulsoAiBadge";
 
 const modules: { id: Module; label: string; icon: React.ReactNode }[] = [
   { id: "dashboard", label: "Dashboard", icon: <LayoutDashboard size={18} /> },
@@ -32,16 +34,30 @@ export function Sidebar() {
         sidebarCollapsed ? "w-16" : "w-60"
       }`}
     >
-      {/* Logo */}
-      <div className="flex items-center gap-3 px-4 py-4 border-b border-border">
-        <div className="w-8 h-8 rounded-lg bg-accent/20 flex items-center justify-center flex-shrink-0">
-          <Shield size={18} className="text-accent" />
+      {/* Logo — ONYX owl + PULSOAI layer */}
+      <div
+        className={`flex items-center border-b border-border bg-gradient-to-b from-surface to-surface-2/80 py-4 ${
+          sidebarCollapsed ? "justify-center px-2" : "gap-3 px-4"
+        }`}
+      >
+        <div
+          className={`relative flex items-center justify-center rounded-xl bg-surface-2/80 border border-accent/20 shadow-[0_0_20px_rgba(0,255,200,0.12)] ${
+            sidebarCollapsed ? "w-9 h-9" : "w-10 h-10"
+          }`}
+        >
+          <OnyxOwlMark size={sidebarCollapsed ? 28 : 34} />
         </div>
         {!sidebarCollapsed && (
-          <div className="overflow-hidden">
-            <h1 className="text-sm font-bold tracking-wider text-accent">ONYX</h1>
+          <div className="overflow-hidden flex-1 min-w-0">
+            <h1 className="text-sm font-bold tracking-[0.18em] text-accent">ONYX</h1>
             <p className="text-[10px] text-text-muted">Security Suite</p>
+            <div className="mt-2 opacity-90">
+              <PulsoAiBadge compact />
+            </div>
           </div>
+        )}
+        {sidebarCollapsed && (
+          <span className="sr-only">ONYX by PULSOAI</span>
         )}
       </div>
 
@@ -53,7 +69,11 @@ export function Sidebar() {
             {projectSummaries.map((p) => (
               <button
                 key={p.id}
-                onClick={() => loadProject(p.id)}
+                onClick={() => {
+                  void loadProject(p.id).catch(() => {
+                    /* toast from store */
+                  });
+                }}
                 className={`w-full text-left px-4 py-1.5 text-xs transition-colors flex items-center justify-between ${
                   activeProject?.id === p.id
                     ? "bg-accent/10 text-accent"

@@ -11,6 +11,9 @@
   --color-text-muted: #8888A0;
   --color-accent: #00FFC8;
   --color-accent-dim: #00CC9F;
+  /* PULSOAI layer — violet used sparingly for agency identity */
+  --color-pulso: #a78bfa;
+  --color-pulso-muted: #7c6bb0;
   --color-danger: #FF3366;
   --color-warning: #FFB800;
   --color-info: #6C7A89;
@@ -85,4 +88,71 @@ body {
     opacity: 1;
     transform: translateX(0);
   }
+}
+
+/* ONYX owl mark — soft pulse + float */
+@keyframes owl-float {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-2px) scale(1.02); }
+}
+
+@keyframes owl-glow {
+  0%, 100% { filter: drop-shadow(0 0 6px rgba(0, 255, 200, 0.35)); }
+  50% { filter: drop-shadow(0 0 14px rgba(167, 139, 250, 0.45)) drop-shadow(0 0 8px rgba(0, 255, 200, 0.4)); }
+}
+
+.onyx-owl-mark {
+  animation: owl-float 3.2s ease-in-out infinite, owl-glow 4s ease-in-out infinite;
+}
+
+@keyframes logo-reveal {
+  from {
+    opacity: 0;
+    transform: scale(0.88) translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.animate-logo-reveal {
+  animation: logo-reveal 0.85s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes ring-expand {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.55;
+  }
+  100% {
+    transform: scale(1.35);
+    opacity: 0;
+  }
+}
+
+.onyx-hero-ring {
+  position: absolute;
+  inset: -8px;
+  border-radius: 9999px;
+  border: 1px solid rgba(0, 255, 200, 0.25);
+  animation: ring-expand 2.8s ease-out infinite;
+  pointer-events: none;
+}
+
+.onyx-hero-ring.delay {
+  animation-delay: 1.4s;
+}
+
+/* App shell — subtle mesh (ONYX + PULSOAI dual tone) */
+.app-shell-gradient {
+  background-color: var(--color-onyx);
+  background-image:
+    radial-gradient(ellipse 120% 80% at 10% -10%, rgba(0, 255, 200, 0.08), transparent 45%),
+    radial-gradient(ellipse 80% 60% at 100% 0%, rgba(167, 139, 250, 0.06), transparent 40%),
+    radial-gradient(ellipse 60% 40% at 50% 100%, rgba(0, 255, 200, 0.04), transparent 50%);
+}
+
+.main-content-glow {
+  box-shadow: inset 0 0 80px rgba(0, 0, 0, 0.35);
 }

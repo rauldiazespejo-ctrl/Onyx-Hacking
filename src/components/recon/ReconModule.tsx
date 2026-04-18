@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useOnyxStore } from "../../store/onyx";
 import type { Target } from "../../types";
+import { engagementAllowsScans } from "../../types";
 
 export function ReconModule() {
   const { activeProject, addTarget, } = useOnyxStore();
@@ -22,16 +23,25 @@ export function ReconModule() {
 
   const handleAddTarget = async () => {
     if (!newTarget.trim() || !activeProject) return;
-    await addTarget(activeProject.id, newTarget.trim());
-    setNewTarget("");
+    try {
+      await addTarget(activeProject.id, newTarget.trim());
+      setNewTarget("");
+    } catch {
+      /* toast from store */
+    }
   };
 
   const handleScan = async (target: Target) => {
     if (!activeProject) return;
     setScanningTargetId(target.id);
-    await useOnyxStore.getState().runReconScan(activeProject.id, target.id);
-    setExpandedTargets((prev) => new Set(prev).add(target.id));
-    setScanningTargetId(null);
+    try {
+      await useOnyxStore.getState().runReconScan(activeProject.id, target.id);
+      setExpandedTargets((prev) => new Set(prev).add(target.id));
+    } catch {
+      /* toast from store */
+    } finally {
+      setScanningTargetId(null);
+    }
   };
 
   const toggleTarget = (id: string) => {
@@ -44,6 +54,7 @@ export function ReconModule() {
   };
 
   const targets = activeProject?.targets || [];
+  const scansAllowed = activeProject ? engagementAllowsScans(activeProject.engagement) : false;
 
   return (
     <div className="flex flex-col h-full gap-4">
@@ -73,6 +84,13 @@ export function ReconModule() {
           </button>
         </div>
       </div>
+
+      {!scansAllowed && activeProject && (
+        <p className="text-[11px] text-warning bg-warning/10 border border-warning/20 rounded-lg px-3 py-2">
+          Scans are disabled until engagement is documented: open Settings → Engagement, add authorized scope, and confirm
+          authorization.
+        </p>
+      )}
 
       {/* Quick Actions */}
       <div className="flex gap-2">
@@ -113,6 +131,7 @@ export function ReconModule() {
                 target={target}
                 expanded={expandedTargets.has(target.id)}
                 isScanning={scanningTargetId === target.id}
+                scansAllowed={scansAllowed}
                 onToggle={() => toggleTarget(target.id)}
                 onScan={() => handleScan(target)}
               />
@@ -128,12 +147,14 @@ function TargetItem({
   target,
   expanded,
   isScanning,
+  scansAllowed,
   onToggle,
   onScan,
 }: {
   target: Target;
   expanded: boolean;
   isScanning: boolean;
+  scansAllowed: boolean;
   onToggle: () => void;
   onScan: () => void;
 }) {
@@ -172,8 +193,15 @@ function TargetItem({
             </div>
           ) : (
             <button
+              type="button"
               onClick={onScan}
-              className="flex items-center gap-1 px-2.5 py-1 bg-accent/10 text-accent rounded text-[11px] hover:bg-accent/20 transition-colors"
+              disabled={!scansAllowed}
+              title={
+                scansAllowed
+                  ? "Run recon scan"
+                  : "Complete Settings → Engagement (scope + authorization) to enable scans"
+              }
+              className="flex items-center gap-1 px-2.5 py-1 bg-accent/10 text-accent rounded text-[11px] hover:bg-accent/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Play size={10} /> Scan
             </button>

@@ -23,12 +23,35 @@ impl Default for OnyxState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditEvent {
+    pub id: String,
+    pub project_id: Option<String>,
+    pub action: String,
+    pub detail: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Engagement {
+    pub client_name: Option<String>,
+    pub client_contact: Option<String>,
+    pub authorized_scope: Option<String>,
+    pub engagement_start: Option<String>,
+    pub engagement_end: Option<String>,
+    pub authorization_reference: Option<String>,
+    #[serde(default)]
+    pub authorization_acknowledged: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
     pub id: String,
     pub name: String,
     pub created_at: String,
     pub updated_at: String,
     pub status: String,
+    #[serde(default)]
+    pub engagement: Engagement,
     pub targets: Vec<Target>,
 }
 

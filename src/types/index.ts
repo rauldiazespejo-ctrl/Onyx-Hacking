@@ -1,3 +1,14 @@
+/** Authorized engagement / rules of engagement (persisted per project). */
+export interface Engagement {
+  client_name?: string | null;
+  client_contact?: string | null;
+  authorized_scope?: string | null;
+  engagement_start?: string | null;
+  engagement_end?: string | null;
+  authorization_reference?: string | null;
+  authorization_acknowledged: boolean;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -5,6 +16,20 @@ export interface Project {
   created_at: string;
   updated_at: string;
   status: string;
+  engagement: Engagement;
+}
+
+/** Mirrors backend gates for recon/vuln scans (UI hint; server enforces). */
+export function engagementAllowsScans(engagement: Engagement | null | undefined): boolean {
+  if (!engagement?.authorization_acknowledged) return false;
+  const scope = engagement.authorized_scope?.trim();
+  if (!scope) return false;
+  const today = new Date().toISOString().slice(0, 10);
+  const start = engagement.engagement_start?.trim();
+  if (start && start > today) return false;
+  const end = engagement.engagement_end?.trim();
+  if (end && end < today) return false;
+  return true;
 }
 
 export interface ProjectSummary {
@@ -63,6 +88,14 @@ export interface ScanResult {
 }
 
 export type Module = "dashboard" | "recon" | "vuln" | "exploit" | "post" | "report";
+
+export interface AuditEvent {
+  id: string;
+  project_id: string | null;
+  action: string;
+  detail: string;
+  created_at: string;
+}
 
 export interface AppInfo {
   name: string;

@@ -1,6 +1,6 @@
 [package]
 name = "onyx"
-version = "0.1.0"
+version = "1.0.0"
 description = "ONYX Security Testing Suite"
 authors = ["ONYX Team"]
 edition = "2021"

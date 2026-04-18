@@ -12,7 +12,7 @@ import {
 import { useOnyxStore } from "../../store/onyx";
 import { VulnDetailModal } from "../shared/VulnDetailModal";
 import type { Vulnerability } from "../../types";
-import { severityBg, severityColors } from "../../types";
+import { engagementAllowsScans, severityBg, severityColors } from "../../types";
 
 export function VulnModule() {
   const { activeProject, isScanning } = useOnyxStore();
@@ -34,6 +34,8 @@ export function VulnModule() {
     });
   }, [vulns, filter, search]);
 
+  const scansAllowed = activeProject ? engagementAllowsScans(activeProject.engagement) : false;
+
   const counts = useMemo(() => ({
     Critical: vulns.filter((v) => v.severity === "Critical").length,
     High: vulns.filter((v) => v.severity === "High").length,
@@ -43,8 +45,11 @@ export function VulnModule() {
   }), [vulns]);
 
   const refreshProject = async () => {
-    if (activeProject) {
+    if (!activeProject) return;
+    try {
       await useOnyxStore.getState().loadProject(activeProject.id);
+    } catch {
+      /* toast from store */
     }
   };
 
@@ -76,12 +81,22 @@ export function VulnModule() {
         </div>
         {activeProject && activeProject.targets.length > 0 && (
           <button
+            type="button"
+            title={
+              scansAllowed
+                ? "Run vulnerability scan on first target"
+                : "Complete Settings → Engagement to enable scans"
+            }
             onClick={async () => {
               const firstTarget = activeProject.targets[0];
-              await useOnyxStore.getState().runVulnScan(activeProject.id, firstTarget.id);
+              try {
+                await useOnyxStore.getState().runVulnScan(activeProject.id, firstTarget.id);
+              } catch {
+                /* toast from store */
+              }
             }}
-            disabled={isScanning}
-            className="flex items-center gap-1.5 px-3 py-2 bg-accent/10 text-accent rounded-lg text-xs font-medium hover:bg-accent/20 transition-colors disabled:opacity-50"
+            disabled={isScanning || !scansAllowed}
+            className="flex items-center gap-1.5 px-3 py-2 bg-accent/10 text-accent rounded-lg text-xs font-medium hover:bg-accent/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Play size={12} /> Run Vuln Scan
           </button>

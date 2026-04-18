@@ -36,7 +36,7 @@ export function TerminalPanel() {
         clearTerminal();
         break;
       case "version":
-        addTerminalLine("  \x1b[36mONYX Security Suite v0.1.0-alpha\x1b[0m");
+        addTerminalLine("  \x1b[36mONYX Security Suite v1.0.0\x1b[0m");
         addTerminalLine("  \x1b[90mDesktop Edition — Rust + Tauri\x1b[0m");
         break;
       case "status":
@@ -51,14 +51,21 @@ export function TerminalPanel() {
       case "new":
         if (parts[1]) {
           addTerminalLine(`  \x1b[90mCreating project "${parts[1]}"...\x1b[0m`);
-          useOnyxStore.getState().createProject(parts.slice(1).join(" "));
+          void useOnyxStore
+            .getState()
+            .createProject(parts.slice(1).join(" "))
+            .catch(() => {
+              /* toast from store */
+            });
         } else {
           addTerminalLine("  \x1b[31mUsage: new <project-name>\x1b[0m");
         }
         break;
       case "target":
         if (parts[1] && activeProject) {
-          addTarget(activeProject.id, parts[1]);
+          void addTarget(activeProject.id, parts[1]).catch(() => {
+            /* toast from store */
+          });
         } else if (!activeProject) {
           addTerminalLine("  \x1b[31mNo active project. Create one first with 'new <name>'.\x1b[0m");
         } else {

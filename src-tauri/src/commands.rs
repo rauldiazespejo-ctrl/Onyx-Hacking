@@ -1,7 +1,110 @@
+use std::path::Path;
+
 use tauri::State;
 use crate::*;
 use crate::db::Database;
-use rusqlite::params;
+use rusqlite::{params, Connection};
+
+fn try_audit(conn: &Connection, project_id: Option<&str>, action: &str, detail: &str) {
+    let _ = conn.execute(
+        "INSERT INTO audit_log (id, project_id, action, detail, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![new_id(), project_id, action, detail, now_iso()],
+    );
+}
+
+pub(crate) fn validate_export_path(path: &str) -> Result<(), String> {
+    let p = Path::new(path);
+    if !p.is_absolute() {
+        return Err("Export path must be absolute.".into());
+    }
+    if path.contains('\0') {
+        return Err("Invalid path.".into());
+    }
+    Ok(())
+}
+
+fn project_id_for_vulnerability(conn: &Connection, vuln_id: &str) -> Option<String> {
+    conn.query_row(
+        "SELECT t.project_id FROM vulnerabilities v JOIN targets t ON v.target_id = t.id WHERE v.id = ?1",
+        params![vuln_id],
+        |row| row.get(0),
+    )
+    .ok()
+}
+
+fn parse_ymd(s: &str) -> Option<chrono::NaiveDate> {
+    chrono::NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").ok()
+}
+
+fn assert_scan_allowed(conn: &Connection, project_id: &str) -> Result<(), String> {
+    let row: (Option<String>, i64, Option<String>, Option<String>) = conn
+        .query_row(
+            "SELECT authorized_scope, authorization_acknowledged, engagement_start, engagement_end FROM projects WHERE id = ?1",
+            params![project_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .map_err(|e| e.to_string())?;
+
+    let (scope, ack, start, end) = row;
+    if ack == 0 {
+        return Err(
+            "No authorized engagement: open Settings → Engagement, document scope, and confirm authorization."
+                .into(),
+        );
+    }
+    let scope_ok = scope.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false);
+    if !scope_ok {
+        return Err(
+            "Authorized scope is empty. Describe allowed targets in Settings → Engagement before scanning."
+                .into(),
+        );
+    }
+
+    let today = chrono::Utc::now().date_naive();
+    if let Some(ref s) = start {
+        if !s.trim().is_empty() {
+            if let Some(d) = parse_ymd(s) {
+                if d > today {
+                    return Err(format!(
+                        "Engagement start date ({}) is in the future; scans stay disabled until then.",
+                        s.trim()
+                    ));
+                }
+            }
+        }
+    }
+    if let Some(ref s) = end {
+        if !s.trim().is_empty() {
+            if let Some(d) = parse_ymd(s) {
+                if d < today {
+                    return Err(format!(
+                        "Engagement end date ({}) has passed. Update the engagement window before scanning.",
+                        s.trim()
+                    ));
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_engagement_update(e: &Engagement) -> Result<(), String> {
+    if e.authorization_acknowledged {
+        let ok = e
+            .authorized_scope
+            .as_ref()
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
+        if !ok {
+            return Err(
+                "You cannot confirm authorization without a written authorized scope (targets, systems, or rules of engagement)."
+                    .into(),
+            );
+        }
+    }
+    Ok(())
+}
 
 // === PROJECT COMMANDS ===
 
@@ -20,6 +123,13 @@ pub fn create_project(
         params![id, name, now, now],
     ).map_err(|e| e.to_string())?;
 
+    try_audit(
+        &conn,
+        Some(&id),
+        "project_created",
+        &serde_json::json!({ "name": name }).to_string(),
+    );
+
     let mut s = state.lock().map_err(|e| e.to_string())?;
     s.active_project_id = Some(id.clone());
 
@@ -29,6 +139,7 @@ pub fn create_project(
         created_at: now.clone(),
         updated_at: now,
         status: "Active".into(),
+        engagement: Engagement::default(),
         targets: vec![],
     })
 }
@@ -74,12 +185,30 @@ pub fn list_projects(db: State<'_, Database>) -> Result<Vec<ProjectSummary>, Str
 pub fn get_project(db: State<'_, Database>, project_id: String) -> Result<Project, String> {
     let conn = db.get_conn()?;
 
-    // Get project
-    let project: (String, String, String, String, String) = conn.query_row(
-        "SELECT id, name, created_at, updated_at, status FROM projects WHERE id = ?1",
-        params![project_id],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
-    ).map_err(|e| e.to_string())?;
+    let (id, name, created_at, updated_at, status, engagement): (String, String, String, String, String, Engagement) = conn
+        .query_row(
+            "SELECT id, name, created_at, updated_at, status, client_name, client_contact, authorized_scope, engagement_start, engagement_end, authorization_reference, authorization_acknowledged FROM projects WHERE id = ?1",
+            params![project_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    Engagement {
+                        client_name: row.get(5)?,
+                        client_contact: row.get(6)?,
+                        authorized_scope: row.get(7)?,
+                        engagement_start: row.get(8)?,
+                        engagement_end: row.get(9)?,
+                        authorization_reference: row.get(10)?,
+                        authorization_acknowledged: row.get::<_, i64>(11)? != 0,
+                    },
+                ))
+            },
+        )
+        .map_err(|e| e.to_string())?;
 
     // Get targets
     let mut stmt = conn.prepare(
@@ -147,18 +276,72 @@ pub fn get_project(db: State<'_, Database>, project_id: String) -> Result<Projec
     }
 
     Ok(Project {
-        id: project.0,
-        name: project.1,
-        created_at: project.2,
-        updated_at: project.3,
-        status: project.4,
+        id,
+        name,
+        created_at,
+        updated_at,
+        status,
+        engagement,
         targets,
     })
 }
 
 #[tauri::command]
+pub fn update_project_engagement(
+    db: State<'_, Database>,
+    project_id: String,
+    engagement: Engagement,
+) -> Result<(), String> {
+    validate_engagement_update(&engagement)?;
+    let conn = db.get_conn()?;
+
+    conn.execute(
+        "UPDATE projects SET
+            client_name = ?1,
+            client_contact = ?2,
+            authorized_scope = ?3,
+            engagement_start = ?4,
+            engagement_end = ?5,
+            authorization_reference = ?6,
+            authorization_acknowledged = ?7,
+            updated_at = ?8
+         WHERE id = ?9",
+        params![
+            engagement.client_name,
+            engagement.client_contact,
+            engagement.authorized_scope,
+            engagement.engagement_start,
+            engagement.engagement_end,
+            engagement.authorization_reference,
+            engagement.authorization_acknowledged as i32,
+            now_iso(),
+            project_id,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+
+    try_audit(
+        &conn,
+        Some(&project_id),
+        "engagement_updated",
+        &serde_json::json!({
+            "authorization_acknowledged": engagement.authorization_acknowledged,
+        })
+        .to_string(),
+    );
+
+    Ok(())
+}
+
+#[tauri::command]
 pub fn delete_project(db: State<'_, Database>, state: State<'_, AppState>, project_id: String) -> Result<(), String> {
     let conn = db.get_conn()?;
+    try_audit(
+        &conn,
+        Some(&project_id),
+        "project_deleted",
+        "{}",
+    );
     conn.execute("DELETE FROM vulnerabilities WHERE target_id IN (SELECT id FROM targets WHERE project_id = ?1)", params![project_id]).map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM ports WHERE target_id IN (SELECT id FROM targets WHERE project_id = ?1)", params![project_id]).map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM targets WHERE project_id = ?1", params![project_id]).map_err(|e| e.to_string())?;
@@ -181,7 +364,7 @@ pub fn add_target(db: State<'_, Database>, project_id: String, host: String) -> 
 
     conn.execute(
         "INSERT INTO targets (id, project_id, host, status, created_at) VALUES (?1, ?2, ?3, 'Pending', ?4)",
-        params![id, project_id, host, now_iso()],
+        params![id, project_id, &host, now_iso()],
     ).map_err(|e| e.to_string())?;
 
     // Update project timestamp
@@ -189,6 +372,13 @@ pub fn add_target(db: State<'_, Database>, project_id: String, host: String) -> 
         "UPDATE projects SET updated_at = ?1 WHERE id = ?2",
         params![now_iso(), project_id],
     ).map_err(|e| e.to_string())?;
+
+    try_audit(
+        &conn,
+        Some(&project_id),
+        "target_added",
+        &serde_json::json!({ "host": &host }).to_string(),
+    );
 
     Ok(Target {
         id,
@@ -204,6 +394,7 @@ pub fn add_target(db: State<'_, Database>, project_id: String, host: String) -> 
 #[tauri::command]
 pub fn start_recon_scan(db: State<'_, Database>, project_id: String, target_id: String) -> Result<ScanResult, String> {
     let conn = db.get_conn()?;
+    assert_scan_allowed(&conn, &project_id)?;
     let scan_id = new_id();
     let now = now_iso();
 
@@ -252,6 +443,19 @@ pub fn start_recon_scan(db: State<'_, Database>, project_id: String, target_id: 
         params![now_iso(), project_id],
     ).map_err(|e| e.to_string())?;
 
+    try_audit(
+        &conn,
+        Some(&project_id),
+        "recon_scan_completed",
+        &serde_json::json!({
+            "scan_id": scan_id,
+            "target_id": target_id,
+            "host": host,
+            "open_ports": ports.iter().filter(|p| p.state == "Open").count(),
+        })
+        .to_string(),
+    );
+
     Ok(ScanResult {
         id: scan_id,
         project_id,
@@ -269,6 +473,7 @@ pub fn start_recon_scan(db: State<'_, Database>, project_id: String, target_id: 
 #[tauri::command]
 pub fn start_vuln_scan(db: State<'_, Database>, project_id: String, target_id: String) -> Result<Vec<Vulnerability>, String> {
     let conn = db.get_conn()?;
+    assert_scan_allowed(&conn, &project_id)?;
     let now = now_iso();
 
     // Get target host
@@ -310,6 +515,18 @@ pub fn start_vuln_scan(db: State<'_, Database>, project_id: String, target_id: S
         params![now_iso(), project_id],
     ).map_err(|e| e.to_string())?;
 
+    try_audit(
+        &conn,
+        Some(&project_id),
+        "vuln_scan_completed",
+        &serde_json::json!({
+            "target_id": target_id,
+            "host": host,
+            "findings": vulns.len(),
+        })
+        .to_string(),
+    );
+
     Ok(vulns)
 }
 
@@ -327,6 +544,15 @@ pub fn toggle_vuln_confirmed(db: State<'_, Database>, vuln_id: String) -> Result
         |row| row.get(0),
     ).map_err(|e| e.to_string())?;
 
+    if let Some(pid) = project_id_for_vulnerability(&conn, &vuln_id) {
+        try_audit(
+            &conn,
+            Some(&pid),
+            "vulnerability_confirmed_toggled",
+            &serde_json::json!({ "vuln_id": vuln_id, "confirmed": confirmed != 0 }).to_string(),
+        );
+    }
+
     Ok(confirmed != 0)
 }
 
@@ -343,6 +569,15 @@ pub fn toggle_false_positive(db: State<'_, Database>, vuln_id: String) -> Result
         params![vuln_id],
         |row| row.get(0),
     ).map_err(|e| e.to_string())?;
+
+    if let Some(pid) = project_id_for_vulnerability(&conn, &vuln_id) {
+        try_audit(
+            &conn,
+            Some(&pid),
+            "vulnerability_false_positive_toggled",
+            &serde_json::json!({ "vuln_id": vuln_id, "false_positive": fp != 0 }).to_string(),
+        );
+    }
 
     Ok(fp != 0)
 }
@@ -378,6 +613,98 @@ pub fn get_scan_history(db: State<'_, Database>, project_id: String) -> Result<V
     Ok(results)
 }
 
+// === AUDIT & EXPORT ===
+
+#[tauri::command]
+pub fn list_audit_events(
+    db: State<'_, Database>,
+    project_id: Option<String>,
+    limit: Option<i64>,
+) -> Result<Vec<AuditEvent>, String> {
+    let conn = db.get_conn()?;
+    let lim = limit.unwrap_or(200).clamp(1, 500);
+    let mut out = Vec::new();
+    if let Some(pid) = project_id {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, project_id, action, detail, created_at FROM audit_log WHERE project_id = ?1 ORDER BY datetime(created_at) DESC LIMIT ?2",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![pid, lim], |row| {
+                Ok(AuditEvent {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    action: row.get(2)?,
+                    detail: row.get(3)?,
+                    created_at: row.get(4)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        for r in rows {
+            out.push(r.map_err(|e| e.to_string())?);
+        }
+    } else {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, project_id, action, detail, created_at FROM audit_log ORDER BY datetime(created_at) DESC LIMIT ?1",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![lim], |row| {
+                Ok(AuditEvent {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    action: row.get(2)?,
+                    detail: row.get(3)?,
+                    created_at: row.get(4)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        for r in rows {
+            out.push(r.map_err(|e| e.to_string())?);
+        }
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn record_audit_event(
+    db: State<'_, Database>,
+    project_id: Option<String>,
+    action: String,
+    detail: String,
+) -> Result<(), String> {
+    const ALLOW: &[&str] = &[
+        "playbook_simulation_started",
+        "playbook_simulation_completed",
+        "report_export_html",
+    ];
+    if !ALLOW.iter().any(|a| *a == action.as_str()) {
+        return Err("Unknown audit action.".into());
+    }
+    if detail.len() > 8192 {
+        return Err("Audit detail too long.".into());
+    }
+    let conn = db.get_conn()?;
+    try_audit(
+        &conn,
+        project_id.as_deref(),
+        action.as_str(),
+        detail.as_str(),
+    );
+    Ok(())
+}
+
+#[tauri::command]
+pub fn save_text_file(path: String, contents: String) -> Result<(), String> {
+    validate_export_path(&path)?;
+    if contents.len() > 25_000_000 {
+        return Err("Export payload is too large.".into());
+    }
+    std::fs::write(Path::new(&path), contents.as_bytes()).map_err(|e| e.to_string())
+}
+
 // === APP INFO ===
 
 #[tauri::command]
@@ -385,7 +712,7 @@ pub fn get_app_info() -> AppInfo {
     AppInfo {
         name: "ONYX Security Suite".into(),
         version: env!("CARGO_PKG_VERSION").into(),
-        edition: "Desktop v0.1.0-alpha".into(),
+        edition: format!("Desktop {}", env!("CARGO_PKG_VERSION")),
     }
 }
 
@@ -394,4 +721,19 @@ pub struct AppInfo {
     pub name: String,
     pub version: String,
     pub edition: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_export_path;
+
+    #[test]
+    fn rejects_relative_export_path() {
+        assert!(validate_export_path("relative/file.html").is_err());
+    }
+
+    #[test]
+    fn accepts_absolute_unix_path() {
+        assert!(validate_export_path("/tmp/onyx-report.html").is_ok());
+    }
 }

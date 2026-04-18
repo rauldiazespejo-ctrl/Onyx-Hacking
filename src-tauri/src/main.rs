@@ -9,6 +9,7 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()
                 .expect("Failed to get app data dir");
@@ -36,6 +37,10 @@ fn main() {
             onyx_lib::commands::toggle_false_positive,
             onyx_lib::commands::get_scan_history,
             onyx_lib::commands::get_app_info,
+            onyx_lib::commands::update_project_engagement,
+            onyx_lib::commands::list_audit_events,
+            onyx_lib::commands::record_audit_event,
+            onyx_lib::commands::save_text_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running ONYX");

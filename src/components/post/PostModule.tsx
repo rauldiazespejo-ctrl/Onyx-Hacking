@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { useOnyxStore } from "../../store/onyx";
+import type { Project } from "../../types";
 import {
   Shield,
   Key,
@@ -41,10 +43,26 @@ const lateralPaths: LateralPath[] = [
 ];
 
 export function PostModule() {
+  const { activeProject } = useOnyxStore();
   const [activeTab, setActiveTab] = useState<"privesc" | "lateral" | "credentials">("privesc");
 
   return (
     <div className="flex flex-col h-full gap-4">
+      {!activeProject ? (
+        <div className="flex flex-col items-center justify-center flex-1 text-text-muted text-sm gap-2">
+          <Shield size={36} className="opacity-25" />
+          <p>Select a project to anchor post-ex views to your targets.</p>
+        </div>
+      ) : (
+        <>
+      <p className="text-[11px] text-text-muted border border-border rounded-lg px-3 py-2 bg-surface-2/40">
+        <strong>Lab / training mode:</strong> the tables below illustrate how ONYX can present post-ex findings.
+        Data is not collected from live hosts until you integrate collectors. Your current targets:{" "}
+        <span className="text-accent terminal-text">
+          {activeProject.targets.length ? activeProject.targets.map((t) => t.host).join(", ") : "none yet"}
+        </span>
+        .
+      </p>
       {/* Tabs */}
       <div className="flex gap-1 bg-surface rounded-lg border border-border p-1">
         {[
@@ -67,8 +85,10 @@ export function PostModule() {
       </div>
 
       {activeTab === "privesc" && <PrivEscPanel />}
-      {activeTab === "lateral" && <LateralPanel />}
+      {activeTab === "lateral" && <LateralPanel project={activeProject} />}
       {activeTab === "credentials" && <CredentialsPanel />}
+        </>
+      )}
     </div>
   );
 }
@@ -126,12 +146,25 @@ function PrivEscPanel() {
   );
 }
 
-function LateralPanel() {
+function LateralPanel({ project }: { project: Project }) {
   const statusColors: Record<string, string> = {
     Exploited: "text-[#27C93F] bg-[#27C93F]/20",
     Possible: "text-[#FFB800] bg-[#FFB800]/20",
     Blocked: "text-text-muted bg-text-muted/20",
   };
+
+  const paths = useMemo(() => {
+    const t = project.targets;
+    if (t.length >= 2) {
+      return t.slice(0, -1).map((from, i) => ({
+        from: from.host,
+        to: t[i + 1]!.host,
+        method: "Sequential target chain (illustrative — not an active path scan)",
+        status: "Possible" as const,
+      }));
+    }
+    return lateralPaths;
+  }, [project]);
 
   return (
     <div className="flex-1 bg-surface rounded-lg border border-border overflow-hidden">
@@ -142,7 +175,7 @@ function LateralPanel() {
       </div>
       <div className="p-4 overflow-y-auto">
         <div className="space-y-3">
-          {lateralPaths.map((path, i) => (
+          {paths.map((path, i) => (
             <div key={i} className="bg-surface-2 rounded-lg border border-border p-3">
               <div className="flex items-center gap-2 text-xs">
                 <span className="terminal-text text-accent">{path.from}</span>

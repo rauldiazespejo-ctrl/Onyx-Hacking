@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useOnyxStore } from "../../store/onyx";
 import type { ScanResult } from "../../types";
+import { engagementAllowsScans } from "../../types";
 
 interface DashboardStats {
   totalTargets: number;
@@ -121,12 +122,22 @@ export function DashboardModule() {
 
         <div className="flex gap-2">
           <button
+            type="button"
+            title={
+              engagementAllowsScans(activeProject.engagement)
+                ? "Run recon on first target"
+                : "Complete Settings → Engagement to enable scans"
+            }
+            disabled={!engagementAllowsScans(activeProject.engagement) || activeProject.targets.length === 0}
             onClick={async () => {
-              if (activeProject.targets.length > 0) {
+              if (activeProject.targets.length === 0) return;
+              try {
                 await useOnyxStore.getState().runReconScan(activeProject.id, activeProject.targets[0].id);
+              } catch {
+                /* toast from store */
               }
             }}
-            className="flex items-center gap-1.5 px-3 py-2 bg-accent/10 text-accent rounded-lg text-xs font-medium hover:bg-accent/20 transition-colors"
+            className="flex items-center gap-1.5 px-3 py-2 bg-accent/10 text-accent rounded-lg text-xs font-medium hover:bg-accent/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <Zap size={13} /> Quick Scan
           </button>

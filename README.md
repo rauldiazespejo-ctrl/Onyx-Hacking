@@ -4,6 +4,9 @@
 
 ONYX is a professional desktop application for ethical hacking and penetration testing, built with Rust (Tauri) and React.
 
+**Product design & AI architecture layer:** **PULSOAI** — marca visual ONYX (búho nocturno), flujos asistidos y dirección de experiencia de producto.
+
+![Version](https://img.shields.io/badge/version-1.0.0-00FFC8)
 ![macOS](https://img.shields.io/badge/macOS-ARM64%20%7C%20x64-blue)
 ![Tauri](https://img.shields.io/badge/Tauri-v2-24C8D8)
 ![React](https://img.shields.io/badge/React-19-61DAFB)
@@ -21,11 +24,15 @@ ONYX is a professional desktop application for ethical hacking and penetration t
 ## Architecture
 
 ```
-Frontend (React + TypeScript + Tailwind)
-    ↕ Tauri IPC
-Backend (Rust + Tokio + SQLite)
-    ↕
-Network / OS
+┌─────────────────────────────────────────────┐
+│  PULSOAI layer (UX, IA aplicada, marca)     │
+├─────────────────────────────────────────────┤
+│  Frontend (React 19 + TypeScript + Tailwind) │
+│         ↕ Tauri IPC                          │
+│  Backend (Rust + Tokio + SQLite + audit)   │
+├─────────────────────────────────────────────┤
+│  Network / OS (herramientas bajo engagement)│
+└─────────────────────────────────────────────┘
 ```
 
 - **Desktop Framework:** Tauri v2 (lightweight, ~11MB binary)
@@ -45,12 +52,10 @@ Network / OS
 ### Build
 
 ```bash
-cd onyx
-
 # Install frontend dependencies
 npm install
 
-# Build frontend
+# Typecheck + production frontend bundle
 npm run build
 
 # Build Tauri app (release)
@@ -60,9 +65,13 @@ npx tauri build
 ### Development
 
 ```bash
-# Start dev server with hot reload
-npm run tauri dev
+# Start the desktop app with hot reload (Vite + Tauri)
+npx tauri dev
 ```
+
+### Continuous integration
+
+GitHub Actions runs on every push and pull request: `npm ci` + `npm run build`, and `cargo check --locked` in `src-tauri` (Linux runner with WebKit dependencies for Tauri).
 
 The app binary will be at:
 - Binary: `src-tauri/target/release/onyx`
@@ -71,15 +80,19 @@ The app binary will be at:
 ## Project Structure
 
 ```
-onyx/
+.
 ├── src/                         # React frontend
 │   ├── components/
 │   │   ├── layout/              # Sidebar, Terminal, StatusBar
+│   │   ├── dashboard/
 │   │   ├── recon/               # Reconnaissance module
 │   │   ├── vuln/                # Vulnerability analysis module
 │   │   ├── exploit/             # Exploitation module
 │   │   ├── post/                # Post-exploitation module
-│   │   └── report/              # Report generation module
+│   │   ├── report/              # Report generation module
+│   │   ├── settings/
+│   │   └── shared/
+│   ├── hooks/
 │   ├── store/                   # Zustand state management
 │   ├── styles/                  # Global styles + Tailwind
 │   ├── types/                   # TypeScript interfaces
@@ -96,10 +109,10 @@ onyx/
 │   ├── capabilities/            # Tauri permissions
 │   ├── icons/                   # App icon
 │   └── tauri.conf.json          # Tauri configuration
-├── plans/                       # Documentation
-│   ├── hacking-etico-dev-plan.md
-│   └── onyx-logo.png
-└── dist/                        # Build output
+├── plans/                       # Roadmap + ethical-use planning
+│   └── hacking-etico-dev-plan.md
+├── .github/workflows/           # CI (frontend + Rust)
+└── dist/                        # Vite build output (gitignored)
 ```
 
 ## Modules
@@ -167,4 +180,4 @@ Proprietary. All rights reserved.
 
 ---
 
-*Built with ❤️ by the ONYX Team — 2026*
+*ONYX · Experience and architecture direction by PULSOAI — 2026*

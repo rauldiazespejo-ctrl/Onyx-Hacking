@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   FileText,
   Download,
@@ -10,27 +10,115 @@ import {
   Clock,
   TrendingUp,
 } from "lucide-react";
+import { save } from "@tauri-apps/plugin-dialog";
+import { invoke } from "@tauri-apps/api/core";
+import { useOnyxStore } from "../../store/onyx";
+import { useToastStore } from "../../hooks/useToast";
+import { buildReportHtml, type ReportTemplate } from "../../lib/reportHtml";
+import type { Vulnerability } from "../../types";
+
+type VulnRow = Vulnerability & { target_host: string };
 
 export function ReportModule() {
-  const [selectedTemplate, setSelectedTemplate] = useState("executive");
+  const { activeProject } = useOnyxStore();
+  const { addToast } = useToastStore();
+  const [selectedTemplate, setSelectedTemplate] = useState<ReportTemplate>("executive");
+  const [appVersion, setAppVersion] = useState("1.0.0");
+  const [exporting, setExporting] = useState(false);
 
-  const templates = [
-    { id: "executive", label: "Executive Summary", desc: "High-level overview for management" },
-    { id: "technical", label: "Technical Report", desc: "Detailed findings with evidence" },
-    { id: "compliance", label: "Compliance Report", desc: "Mapped to OWASP/PTES/MITRE" },
+  useEffect(() => {
+    invoke<{ version: string }>("get_app_info")
+      .then((info) => setAppVersion(info.version))
+      .catch(() => {});
+  }, []);
+
+  const vulns: VulnRow[] = useMemo(() => {
+    if (!activeProject) return [];
+    return activeProject.targets.flatMap((t) =>
+      t.vulnerabilities.map((v) => ({ ...v, target_host: t.host }))
+    );
+  }, [activeProject]);
+
+  const stats = useMemo(() => {
+    const criticalHigh = vulns.filter((v) => v.severity === "Critical" || v.severity === "High").length;
+    const confirmed = vulns.filter((v) => v.confirmed).length;
+    return { criticalHigh, total: vulns.length, confirmed };
+  }, [vulns]);
+
+  const html = useMemo(() => {
+    if (!activeProject) return "";
+    return buildReportHtml(activeProject, selectedTemplate, appVersion);
+  }, [activeProject, selectedTemplate, appVersion]);
+
+  const topFindings = useMemo(() => {
+    const order = ["Critical", "High", "Medium", "Low", "Info"];
+    return [...vulns].sort((a, b) => order.indexOf(a.severity) - order.indexOf(b.severity)).slice(0, 8);
+  }, [vulns]);
+
+  const handleExportHtml = async () => {
+    if (!activeProject || !html) return;
+    setExporting(true);
+    try {
+      const path = await save({
+        defaultPath: `${sanitizeFilePart(activeProject.name)}-onyx-report.html`,
+        filters: [{ name: "HTML", extensions: ["html"] }],
+      });
+      if (!path) return;
+      await invoke("save_text_file", { path, contents: html });
+      await invoke("record_audit_event", {
+        project_id: activeProject.id,
+        action: "report_export_html",
+        detail: JSON.stringify({ template: selectedTemplate, path }),
+      });
+      addToast({ type: "success", title: "Report exported", message: path });
+    } catch (e) {
+      addToast({
+        type: "error",
+        title: "Export failed",
+        message: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handlePrint = () => {
+    const w = window.open("", "_blank");
+    if (!w) {
+      addToast({ type: "warning", title: "Pop-up blocked", message: "Allow pop-ups to print the preview." });
+      return;
+    }
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    w.print();
+  };
+
+  if (!activeProject) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-text-muted gap-2">
+        <FileText size={40} className="opacity-25" />
+        <p className="text-sm">Select a project to build reports from live findings.</p>
+      </div>
+    );
+  }
+
+  const templates: { id: ReportTemplate; label: string; desc: string }[] = [
+    { id: "executive", label: "Executive summary", desc: "Risk posture and top themes for leadership" },
+    { id: "technical", label: "Technical report", desc: "Targets, exposure, and finding tables" },
+    { id: "compliance", label: "Compliance framing", desc: "Same data with framework-oriented preamble" },
   ];
 
   return (
     <div className="flex flex-col h-full gap-4">
-      {/* Report Stats */}
       <div className="grid grid-cols-4 gap-2">
         <div className="bg-surface rounded-lg border border-border p-3 flex items-center gap-3">
           <div className="w-10 h-10 rounded-lg bg-danger/10 flex items-center justify-center">
             <AlertTriangle size={18} className="text-danger" />
           </div>
           <div>
-            <p className="text-lg font-bold text-danger">3</p>
-            <p className="text-[10px] text-text-muted">Critical/High</p>
+            <p className="text-lg font-bold text-danger">{stats.criticalHigh}</p>
+            <p className="text-[10px] text-text-muted">Critical / High</p>
           </div>
         </div>
         <div className="bg-surface rounded-lg border border-border p-3 flex items-center gap-3">
@@ -38,8 +126,8 @@ export function ReportModule() {
             <BarChart3 size={18} className="text-[#FFB800]" />
           </div>
           <div>
-            <p className="text-lg font-bold text-[#FFB800]">6</p>
-            <p className="text-[10px] text-text-muted">Total Findings</p>
+            <p className="text-lg font-bold text-[#FFB800]">{stats.total}</p>
+            <p className="text-[10px] text-text-muted">Findings</p>
           </div>
         </div>
         <div className="bg-surface rounded-lg border border-border p-3 flex items-center gap-3">
@@ -47,7 +135,7 @@ export function ReportModule() {
             <CheckCircle size={18} className="text-[#27C93F]" />
           </div>
           <div>
-            <p className="text-lg font-bold text-[#27C93F]">3</p>
+            <p className="text-lg font-bold text-[#27C93F]">{stats.confirmed}</p>
             <p className="text-[10px] text-text-muted">Confirmed</p>
           </div>
         </div>
@@ -56,21 +144,21 @@ export function ReportModule() {
             <Clock size={18} className="text-accent" />
           </div>
           <div>
-            <p className="text-lg font-bold text-accent">4.2h</p>
-            <p className="text-[10px] text-text-muted">Duration</p>
+            <p className="text-lg font-bold text-accent">{activeProject.targets.length}</p>
+            <p className="text-[10px] text-text-muted">Targets</p>
           </div>
         </div>
       </div>
 
-      {/* Template Selection */}
       <div className="bg-surface rounded-lg border border-border p-4">
         <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3 flex items-center gap-2">
-          <FileText size={14} /> Report Template
+          <FileText size={14} /> Report template
         </h3>
         <div className="grid grid-cols-3 gap-2">
           {templates.map((t) => (
             <button
               key={t.id}
+              type="button"
               onClick={() => setSelectedTemplate(t.id)}
               className={`p-3 rounded-lg border text-left transition-all ${
                 selectedTemplate === t.id
@@ -85,103 +173,106 @@ export function ReportModule() {
         </div>
       </div>
 
-      {/* Preview */}
-      <div className="flex-1 bg-surface rounded-lg border border-border overflow-hidden flex flex-col">
+      <div className="flex-1 bg-surface rounded-lg border border-border overflow-hidden flex flex-col min-h-[280px]">
         <div className="flex items-center justify-between px-4 py-3 border-b border-border">
           <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider flex items-center gap-2">
-            <FileText size={14} /> Report Preview
+            <FileText size={14} /> Live preview
           </h3>
           <div className="flex gap-2">
-            <button className="flex items-center gap-1 px-2.5 py-1 bg-surface-2 rounded text-[11px] text-text-muted hover:text-text transition-colors">
-              <Printer size={11} /> Print
+            <button
+              type="button"
+              onClick={handlePrint}
+              className="flex items-center gap-1 px-2.5 py-1 bg-surface-2 rounded text-[11px] text-text-muted hover:text-text transition-colors"
+            >
+              <Printer size={11} /> Print / Save as PDF
             </button>
-            <button className="flex items-center gap-1 px-2.5 py-1 bg-accent/10 rounded text-[11px] text-accent hover:bg-accent/20 transition-colors">
-              <Download size={11} /> Export PDF
+            <button
+              type="button"
+              onClick={handleExportHtml}
+              disabled={exporting}
+              className="flex items-center gap-1 px-2.5 py-1 bg-accent/10 rounded text-[11px] text-accent hover:bg-accent/20 transition-colors disabled:opacity-40"
+            >
+              <Download size={11} /> {exporting ? "Exporting…" : "Export HTML"}
             </button>
           </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-6 bg-[#1A1A1E]">
-          <div className="max-w-2xl mx-auto">
-            {/* Report Header */}
-            <div className="text-center mb-8 pb-6 border-b border-border">
-              <div className="flex items-center justify-center gap-3 mb-4">
-                <Shield size={28} className="text-accent" />
-                <h1 className="text-xl font-bold text-accent tracking-wider">ONYX</h1>
+          <div className="max-w-2xl mx-auto text-text">
+            <div className="text-center mb-6 pb-4 border-b border-border">
+              <div className="flex items-center justify-center gap-3 mb-3">
+                <Shield size={26} className="text-accent" />
+                <h1 className="text-lg font-bold text-accent tracking-wider">ONYX</h1>
               </div>
-              <h2 className="text-lg font-semibold">Penetration Testing Report</h2>
-              <p className="text-xs text-text-muted mt-1">Executive Summary — April 2026</p>
-              <div className="flex items-center justify-center gap-4 mt-3 text-[10px] text-text-muted">
-                <span>Project: Demo Assessment</span>
-                <span>|</span>
-                <span>Classification: CONFIDENTIAL</span>
-                <span>|</span>
-                <span>Version: 1.0</span>
-              </div>
+              <h2 className="text-base font-semibold">{activeProject.name}</h2>
+              <p className="text-[11px] text-text-muted mt-1">
+                {selectedTemplate === "executive"
+                  ? "Executive summary"
+                  : selectedTemplate === "technical"
+                    ? "Technical report"
+                    : "Compliance-oriented summary"}{" "}
+                · {new Date().toLocaleDateString()}
+              </p>
+              <p className="text-[10px] text-text-muted mt-2">CONFIDENTIAL · v{appVersion}</p>
             </div>
 
-            {/* Risk Summary */}
-            <div className="mb-6">
-              <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-                <TrendingUp size={14} /> Risk Summary
+            <div className="mb-5">
+              <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
+                <TrendingUp size={14} /> Severity mix
               </h3>
-              <div className="grid grid-cols-4 gap-2">
-                {[
-                  { label: "Critical", count: 1, color: "#FF3366" },
-                  { label: "High", count: 2, color: "#FF6633" },
-                  { label: "Medium", count: 1, color: "#FFB800" },
-                  { label: "Low", count: 2, color: "#00FFC8" },
-                ].map((r) => (
-                  <div key={r.label} className="bg-surface rounded-lg p-3 text-center border border-border">
-                    <p className="text-xl font-bold" style={{ color: r.color }}>{r.count}</p>
-                    <p className="text-[10px] text-text-muted">{r.label}</p>
+              <div className="grid grid-cols-5 gap-2">
+                {(["Critical", "High", "Medium", "Low", "Info"] as const).map((label) => (
+                  <div key={label} className="bg-surface rounded-lg p-2 text-center border border-border">
+                    <p className="text-lg font-bold text-text">{vulns.filter((v) => v.severity === label).length}</p>
+                    <p className="text-[9px] text-text-muted">{label}</p>
                   </div>
                 ))}
               </div>
             </div>
 
-            {/* Top Findings */}
-            <div className="mb-6">
-              <h3 className="text-sm font-semibold mb-3">Key Findings</h3>
+            <div>
+              <h3 className="text-sm font-semibold mb-2">Top findings</h3>
               <div className="space-y-2">
-                {[
-                  { title: "Remote Code Execution (Apache Struts)", severity: "Critical", id: "CVE-2024-9999" },
-                  { title: "SQL Injection in Login Form", severity: "High", id: "CVE-2024-1234" },
-                  { title: "Server-Side Request Forgery (SSRF)", severity: "High", id: "CVE-2024-7777" },
-                ].map((finding, i) => (
-                  <div key={i} className="bg-surface rounded-lg border border-border p-3 flex items-center gap-3">
-                    <span className="text-xs font-bold w-6 text-text-muted">{i + 1}.</span>
-                    <div className="flex-1">
-                      <p className="text-sm font-medium">{finding.title}</p>
-                      <p className="text-[10px] text-accent terminal-text">{finding.id}</p>
+                {topFindings.length === 0 ? (
+                  <p className="text-xs text-text-muted">No findings yet — run vulnerability analysis first.</p>
+                ) : (
+                  topFindings.map((finding, i) => (
+                    <div key={finding.id} className="bg-surface rounded-lg border border-border p-3 flex gap-2">
+                      <span className="text-xs font-bold text-text-muted w-5">{i + 1}.</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{finding.title}</p>
+                        <p className="text-[10px] text-accent terminal-text">
+                          {finding.target_host}
+                          {finding.cve ? ` · ${finding.cve}` : ""}
+                        </p>
+                      </div>
+                      <span
+                        className={`text-[10px] font-semibold px-2 py-0.5 rounded flex-shrink-0 ${
+                          finding.severity === "Critical"
+                            ? "bg-danger/20 text-danger"
+                            : finding.severity === "High"
+                              ? "bg-[#FF6633]/20 text-[#FF6633]"
+                              : "bg-surface-3 text-text-muted"
+                        }`}
+                      >
+                        {finding.severity}
+                      </span>
                     </div>
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
-                      finding.severity === "Critical" ? "bg-danger/20 text-danger" : "bg-[#FF6633]/20 text-[#FF6633]"
-                    }`}>
-                      {finding.severity}
-                    </span>
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
             </div>
 
-            {/* Recommendations */}
-            <div className="mb-6">
-              <h3 className="text-sm font-semibold mb-3">Recommendations</h3>
-              <div className="space-y-2 text-xs text-text">
-                <p>1. <span className="font-medium">Immediate:</span> Patch Apache Struts to the latest version to remediate CVE-2024-9999.</p>
-                <p>2. <span className="font-medium">Short-term:</span> Implement parameterized queries to prevent SQL injection attacks.</p>
-                <p>3. <span className="font-medium">Short-term:</span> Add URL validation and whitelist for the SSRF-vulnerable endpoint.</p>
-                <p>4. <span className="font-medium">Medium-term:</span> Implement a WAF to provide additional protection against common attacks.</p>
-              </div>
-            </div>
-
-            <div className="text-center text-[10px] text-text-muted pt-4 border-t border-border">
-              Generated by ONYX Security Suite v0.1.0-alpha — April 16, 2026
-            </div>
+            <p className="text-center text-[10px] text-text-muted pt-6 border-t border-border mt-6">
+              Use Export HTML for a standalone file. Use your browser print dialog for PDF.
+            </p>
           </div>
         </div>
       </div>
     </div>
   );
+}
+
+function sanitizeFilePart(name: string): string {
+  return name.replace(/[^\w\-]+/g, "_").slice(0, 64) || "project";
 }

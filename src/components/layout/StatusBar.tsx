@@ -1,7 +1,16 @@
+import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { useOnyxStore } from "../../store/onyx";
 
 export function StatusBar() {
   const { isScanning, scanProgress, activeProject, activeModule } = useOnyxStore();
+  const [version, setVersion] = useState("1.0.0");
+
+  useEffect(() => {
+    invoke<{ version: string }>("get_app_info")
+      .then((info) => setVersion(info.version))
+      .catch(() => {});
+  }, []);
   const moduleLabels: Record<string, string> = {
     recon: "Reconnaissance",
     vuln: "Vulnerability Analysis",
@@ -47,7 +56,11 @@ export function StatusBar() {
             <span className="text-text-muted">{scanProgress}%</span>
           </div>
         )}
-        <span className="text-text-muted">ONYX v0.1.0-alpha</span>
+        <span className="text-text-muted flex items-center gap-2">
+          <span className="text-[#a78bfa]/80 font-semibold tracking-wider text-[10px]">PULSOAI</span>
+          <span className="opacity-30">·</span>
+          ONYX v{version}
+        </span>
       </div>
     </div>
   );
